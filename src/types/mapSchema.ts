@@ -11,6 +11,7 @@ export interface ClipSegmentRuntime {
 
 export interface AnimatedPartRuntime {
   node: THREE.Object3D;
+  highlightNode?: THREE.Object3D;
   clips: ClipSegmentRuntime[];
   start: number;
   end: number;
@@ -18,6 +19,7 @@ export interface AnimatedPartRuntime {
   t: number;
   state: 'closed' | 'opening' | 'open' | 'closing';
   label: string;
+  isLightSwitch?: boolean;
 }
 
 export interface SeatInteractableRuntime {
@@ -49,9 +51,12 @@ export interface MapItemDefinition {
 
 export interface AnimatedGlbPartConfig {
   nodeName: string;
+  highlightNodeName?: string;
   clipName?: string;
   clipNames?: string[];
   midTime?: number;
+  isLightSwitch?: boolean;
+  hitRadius?: number;
 }
 
 export interface AnimatedGlbSeatConfig {
@@ -69,6 +74,7 @@ export interface AnimatedGlbModelConfig {
   rotation?: [number, number, number];
   scale: number;
   speed: number;
+  autoSpinY?: number;
   parts: AnimatedGlbPartConfig[];
   seatNodes?: AnimatedGlbSeatConfig[];
 }
@@ -109,7 +115,7 @@ export interface RoomEnvironmentResult {
   setLamp: (on: boolean) => void;
   getLampOn: () => boolean;
   toggleSwitchLever?: (on: boolean) => void;
-  isBlocked: (x: number, z: number) => boolean;
+  isBlocked: (x: number, z: number, isDoorOpen?: boolean) => boolean;
 }
 
 export interface CrimeSceneMapConfig {

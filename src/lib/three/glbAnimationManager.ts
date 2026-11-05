@@ -8,6 +8,7 @@ import {
 
 export interface LoadedAnimatedModel {
   config: AnimatedGlbModelConfig;
+  rootObj: THREE.Object3D;
   mixer: THREE.AnimationMixer;
   parts: Record<string, AnimatedPartRuntime>;
 }
@@ -57,6 +58,12 @@ export function loadAnimatedGlbModel(
           );
         }
         rootObj.scale.setScalar(config.scale);
+        gltf.scene.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh && !child.userData.proxy) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
         scene.add(gltf.scene);
 
         const mixer = new THREE.AnimationMixer(gltf.scene);
@@ -70,8 +77,8 @@ export function loadAnimatedGlbModel(
           const requestedClips = partCfg.clipNames
             ? partCfg.clipNames
             : partCfg.clipName
-            ? [partCfg.clipName]
-            : [];
+              ? [partCfg.clipName]
+              : [];
 
           const clips: ClipSegmentRuntime[] = [];
           let globalStart = 1e9;
@@ -106,8 +113,14 @@ export function loadAnimatedGlbModel(
 
           if (clips.length === 0 || globalStart > globalEnd) return;
 
+          const highlightNode =
+            (partCfg.highlightNodeName &&
+              findGlbNode(gltf.scene, partCfg.highlightNodeName)) ||
+            node;
+
           const part: AnimatedPartRuntime = {
             node,
+            highlightNode,
             clips,
             start: globalStart,
             end: globalEnd,
@@ -115,11 +128,21 @@ export function loadAnimatedGlbModel(
             t: globalStart,
             state: 'closed',
             label: nodeName,
+            isLightSwitch: partCfg.isLightSwitch,
           };
+
+          if (partCfg.hitRadius) {
+            const px = new THREE.Mesh(
+              new THREE.SphereGeometry(partCfg.hitRadius, 8, 6),
+              new THREE.MeshBasicMaterial({ visible: false })
+            );
+            px.userData.proxy = true;
+            highlightNode.add(px);
+          }
 
           applyPartTime(part);
           parts[nodeName] = part;
-          node.userData.act = { type: 'part', p: part };
+          highlightNode.userData.act = { type: 'part', p: part };
         });
 
         if (config.seatNodes) {
@@ -139,7 +162,7 @@ export function loadAnimatedGlbModel(
         }
 
         mixer.update(0);
-        resolve({ config, mixer, parts });
+        resolve({ config, rootObj, mixer, parts });
       },
       undefined,
       (err) => reject(err)
@@ -152,6 +175,9 @@ export function updateAnimatedModels(
   dt: number
 ): void {
   for (const model of loadedModels) {
+    if (model.config.autoSpinY) {
+      model.rootObj.rotation.y += dt * model.config.autoSpinY;
+    }
     let moved = false;
     const sp = model.config.speed;
     for (const key in model.parts) {

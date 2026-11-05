@@ -30,6 +30,10 @@ export const FirstPersonSceneCanvas: React.FC = () => {
     const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(currentMap.backgroundHex);
@@ -38,6 +42,33 @@ export const FirstPersonSceneCanvas: React.FC = () => {
       currentMap.fogNear,
       currentMap.fogFar
     );
+
+    // Tạo bản đồ phản xạ môi trường PBR (PMREM) để kim loại, gỗ bóng, kính trong GLB phản chiếu chân thật
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envScene = new THREE.Scene();
+    envScene.background = new THREE.Color(0x121824);
+    const eTop = new THREE.Mesh(
+      new THREE.PlaneGeometry(16, 16),
+      new THREE.MeshBasicMaterial({ color: 0x6a7c9b, side: THREE.DoubleSide })
+    );
+    eTop.position.set(0, 5, 0);
+    eTop.rotation.x = Math.PI / 2;
+    envScene.add(eTop);
+    const eWarm = new THREE.Mesh(
+      new THREE.SphereGeometry(1.4, 12, 12),
+      new THREE.MeshBasicMaterial({ color: 0xffdca8 })
+    );
+    eWarm.position.set(3, 3.5, 3);
+    envScene.add(eWarm);
+    const eCool = new THREE.Mesh(
+      new THREE.SphereGeometry(1.4, 12, 12),
+      new THREE.MeshBasicMaterial({ color: 0x6898d8 })
+    );
+    eCool.position.set(-4, 2.5, -3);
+    envScene.add(eCool);
+    const envRT = pmrem.fromScene(envScene, 0.04);
+    scene.environment = envRT.texture;
+    pmrem.dispose();
 
     const cam = new THREE.PerspectiveCamera(70, 1, 0.05, 50);
     cam.rotation.order = 'YXZ';
@@ -51,6 +82,46 @@ export const FirstPersonSceneCanvas: React.FC = () => {
     const handL = new THREE.PointLight(0xffffff, 0, 3, 0);
     handL.position.set(0.1, 0.3, 0.2);
     cam.add(handL);
+
+    // Đèn pin điều tra viên (bấm F để bật/tắt)
+    let flashlightOn = true;
+    const flashlight = new THREE.SpotLight(
+      0xfff6e5,
+      1.35 * PI,
+      15,
+      Math.PI / 6.2,
+      0.58,
+      1.1
+    );
+    flashlight.position.set(0.16, -0.1, 0.05);
+    flashlight.target.position.set(0, -0.02, -4);
+    cam.add(flashlight);
+    cam.add(flashlight.target);
+
+    // Hạt bụi lơ lửng trong không khí dưới ánh đèn
+    const dustCount = 220;
+    const dustPositions = new Float32Array(dustCount * 3);
+    for (let i = 0; i < dustCount; i++) {
+      dustPositions[i * 3] = (Math.random() - 0.5) * 12;
+      dustPositions[i * 3 + 1] = 0.25 + Math.random() * 2.6;
+      dustPositions[i * 3 + 2] = -4.8 + Math.random() * 13.2;
+    }
+    const dustGeo = new THREE.BufferGeometry();
+    dustGeo.setAttribute(
+      'position',
+      new THREE.BufferAttribute(dustPositions, 3)
+    );
+    const dustMat = new THREE.PointsMaterial({
+      color: 0xdce6f7,
+      size: 0.016,
+      transparent: true,
+      opacity: 0.36,
+      depthWrite: false,
+    });
+    const dustPoints = new THREE.Points(dustGeo, dustMat);
+    dustPoints.raycast = () => {};
+    dustPoints.userData.noRaycast = true;
+    scene.add(dustPoints);
 
     const pivot = new THREE.Group();
     pivot.visible = false;
@@ -148,7 +219,7 @@ export const FirstPersonSceneCanvas: React.FC = () => {
     } | null = null;
 
     const ray = new THREE.Raycaster();
-    ray.far = 2.6;
+    ray.far = 3.6;
     const ambience = new RoomAmbiencePlayer();
 
     function lockPointer() {
@@ -251,6 +322,9 @@ export const FirstPersonSceneCanvas: React.FC = () => {
       if (!a) return;
       if (a.type === 'part') {
         a.p.state = a.p.state === 'closed' ? 'opening' : 'closing';
+        if (a.p.isLightSwitch) {
+          env.setLamp(!env.getLampOn());
+        }
       } else if (a.type === 'switch') {
         env.setLamp(!env.getLampOn());
       } else if (a.type === 'cctv') {
@@ -321,6 +395,9 @@ export const FirstPersonSceneCanvas: React.FC = () => {
           }
         } else if (isSitting && (k === 'Space' || k === 'KeyQ')) {
           standUp();
+        } else if (k === 'KeyF') {
+          flashlightOn = !flashlightOn;
+          flashlight.intensity = flashlightOn ? 1.35 * PI : 0;
         } else if (k === 'KeyI' || k === 'Tab') {
           store.openPanel('bag');
         } else if (k === 'KeyJ') {
@@ -416,13 +493,16 @@ export const FirstPersonSceneCanvas: React.FC = () => {
           const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
           const r = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
           if (f || r) {
+            const doorModel = loadedModels.find((m) => m.config.id === 'door');
+            const doorPart = doorModel?.parts['Door_main'];
+            const isDoorOpen = doorPart ? doorPart.state === 'open' : false;
             const sp = 2.4 * dt * (f && r ? 0.707 : 1);
             const dx = (-Math.sin(yaw) * f + Math.cos(yaw) * r) * sp;
             const dz = (-Math.cos(yaw) * f - Math.sin(yaw) * r) * sp;
-            if (!env.isBlocked(cam.position.x + dx, cam.position.z)) {
+            if (!env.isBlocked(cam.position.x + dx, cam.position.z, isDoorOpen)) {
               cam.position.x += dx;
             }
-            if (!env.isBlocked(cam.position.x, cam.position.z + dz)) {
+            if (!env.isBlocked(cam.position.x, cam.position.z + dz, isDoorOpen)) {
               cam.position.z += dz;
             }
             cam.position.y = 1.65 + Math.sin(now * 0.008) * 0.012;
@@ -430,7 +510,7 @@ export const FirstPersonSceneCanvas: React.FC = () => {
         }
         cam.rotation.set(pitch, yaw, 0);
 
-        if (frame++ % 3 === 0) {
+        if (frame++ % 2 === 0) {
           const o = raycastInteractable(
             ray,
             cam,
@@ -461,6 +541,10 @@ export const FirstPersonSceneCanvas: React.FC = () => {
         }
       }
 
+      // Chuyển động nhẹ của hạt bụi lơ lửng trong không khí
+      dustPoints.rotation.y = Math.sin(now * 0.00015) * 0.04;
+      dustPoints.position.y = Math.sin(now * 0.0006) * 0.04;
+
       updateAnimatedModels(loadedModels, dt);
       renderer.render(scene, cam);
       rafId = requestAnimationFrame(loop);
@@ -477,6 +561,7 @@ export const FirstPersonSceneCanvas: React.FC = () => {
       window.removeEventListener('mouseup', onMouseUp);
       document.removeEventListener('pointerlockchange', onPointerLockChange);
       ambience.dispose();
+      envRT.dispose();
       renderer.dispose();
     };
   }, [currentMap]);
