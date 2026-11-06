@@ -519,3 +519,218 @@ export function createClockFaceTexture(): THREE.CanvasTexture {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+
+export function createChalkboardTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 1024;
+  c.height = 512;
+  const g = c.getContext('2d')!;
+
+  g.fillStyle = '#183a2b';
+  g.fillRect(0, 0, 1024, 512);
+
+  // Vệt bụi phấn mờ trên mặt bảng
+  for (let i = 0; i < 25; i++) {
+    g.fillStyle = 'rgba(235, 245, 238, 0.03)';
+    g.beginPath();
+    g.ellipse(
+      100 + ((i * 173) % 820),
+      80 + ((i * 97) % 350),
+      65,
+      28,
+      (i % 5) * 0.3,
+      0,
+      Math.PI * 2
+    );
+    g.fill();
+  }
+
+  // Kẻ ô mờ bảng từ
+  g.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+  g.lineWidth = 1;
+  for (let x = 0; x < 1024; x += 32) {
+    g.beginPath();
+    g.moveTo(x, 0);
+    g.lineTo(x, 512);
+    g.stroke();
+  }
+  for (let y = 0; y < 512; y += 32) {
+    g.beginPath();
+    g.moveTo(0, y);
+    g.lineTo(1024, y);
+    g.stroke();
+  }
+
+  // Đường chia cột bảng
+  g.strokeStyle = 'rgba(240, 245, 240, 0.45)';
+  g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(250, 20);
+  g.lineTo(250, 490);
+  g.moveTo(770, 20);
+  g.lineTo(770, 490);
+  g.stroke();
+
+  // Cột trái: Sĩ số & Trực nhật
+  g.fillStyle = '#eef5ee';
+  g.font = 'bold 20px "Courier New", monospace';
+  g.fillText('LỚP 11A3', 28, 52);
+  g.font = '17px "Courier New", monospace';
+  g.fillText('Sĩ số: 42/42 (Vắng: 0)', 28, 86);
+  g.fillText('GVCN: Thầy Hùng', 28, 118);
+  g.fillText('Trực nhật: Tổ 2', 28, 160);
+  g.fillText('- Nguyễn Văn Minh', 28, 190);
+  g.fillText('- Nguyễn Anh Tuấn', 28, 220);
+
+  // Cột giữa: Nội dung bài học + hình chóp
+  g.textAlign = 'center';
+  g.font = 'italic 20px "Courier New", monospace';
+  g.fillText('Thứ Tư, ngày 14 tháng 10', 510, 48);
+  g.fillStyle = '#fff59d';
+  g.font = 'bold 25px "Courier New", monospace';
+  g.fillText('TIẾT 4: HÌNH HỌC KHÔNG GIAN', 510, 90);
+  g.fillStyle = '#eef5ee';
+  g.font = '19px "Courier New", monospace';
+  g.fillText('Chứng minh: SA ⊥ (ABC) ⇒ SA ⊥ BC', 510, 134);
+
+  // Vẽ hình chóp S.ABC bằng phấn trắng
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 2.5;
+  g.beginPath();
+  g.moveTo(460, 175); // S
+  g.lineTo(380, 355); // A
+  g.lineTo(500, 415); // B
+  g.lineTo(630, 335); // C
+  g.lineTo(460, 175); // S
+  g.moveTo(460, 175);
+  g.lineTo(500, 415); // SB
+  g.stroke();
+
+  g.setLineDash([7, 6]);
+  g.beginPath();
+  g.moveTo(380, 355);
+  g.lineTo(630, 335); // AC đứt nét
+  g.stroke();
+  g.setLineDash([]);
+
+  g.font = 'bold 18px "Courier New", monospace';
+  g.fillText('S', 460, 164);
+  g.fillText('A', 364, 362);
+  g.fillText('B', 500, 438);
+  g.fillText('C', 646, 342);
+
+  // Cột phải: Thông báo của lớp
+  g.textAlign = 'left';
+  g.fillStyle = '#ffdf80';
+  g.font = 'bold 19px "Courier New", monospace';
+  g.fillText('GHI CHÚ LỚP 11A3:', 790, 56);
+  g.fillStyle = '#eef5ee';
+  g.font = '16px "Courier New", monospace';
+  g.fillText('• 18:30: Đội bóng', 790, 96);
+  g.fillText('  tập tại sân sau.', 790, 122);
+  g.fillText('• Tuấn (Đội trưởng)', 790, 162);
+  g.fillText('  gặp BGH sáng 15/10', 790, 188);
+  g.fillText('  về việc kỷ luật.', 790, 214);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+export function createTacticsBoardTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 384;
+  const g = c.getContext('2d')!;
+
+  g.fillStyle = '#e8ecf2';
+  g.fillRect(0, 0, 512, 384);
+  g.strokeStyle = '#2d3748';
+  g.lineWidth = 8;
+  g.strokeRect(8, 8, 496, 368);
+
+  // Sơ đồ sân bóng thu nhỏ
+  g.fillStyle = '#275937';
+  g.fillRect(36, 68, 440, 276);
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 2;
+  g.strokeRect(48, 80, 416, 252);
+  g.beginPath();
+  g.moveTo(256, 80);
+  g.lineTo(256, 332);
+  g.stroke();
+  g.beginPath();
+  g.arc(256, 206, 38, 0, Math.PI * 2);
+  g.stroke();
+
+  g.fillStyle = '#1a202c';
+  g.font = 'bold 20px "Courier New", monospace';
+  g.textAlign = 'center';
+  g.fillText('CHIẾN THUẬT ĐỘI BÓNG 11A3 — TẬP TỐI 14/10', 256, 44);
+
+  // Quân cờ nam châm đỏ
+  [
+    [90, 206, '1'],
+    [160, 125, '4'],
+    [160, 285, '5'],
+    [250, 155, '8'],
+    [250, 255, '6'],
+    [355, 206, '10 (TUẤN - C)'],
+  ].forEach(([px, py, label]) => {
+    g.fillStyle = '#d62828';
+    g.beginPath();
+    g.arc(px as number, py as number, 13, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#ffffff';
+    g.font = 'bold 13px "Courier New", monospace';
+    g.fillText(String(label), px as number, (py as number) - 18);
+  });
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+export function createHonorBoardTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 1024;
+  c.height = 512;
+  const g = c.getContext('2d')!;
+
+  g.fillStyle = '#4a1216';
+  g.fillRect(0, 0, 1024, 512);
+  g.strokeStyle = '#e0b84c';
+  g.lineWidth = 10;
+  g.strokeRect(16, 16, 992, 480);
+  g.lineWidth = 3;
+  g.strokeRect(28, 28, 968, 456);
+
+  g.fillStyle = '#ffd966';
+  g.textAlign = 'center';
+  g.font = 'bold 34px "Courier New", monospace';
+  g.fillText('BẢNG VÀNG DANH DỰ & SƠ ĐỒ TRƯỜNG THPT', 512, 76);
+
+  g.fillStyle = '#f7f2e0';
+  g.font = 'bold 22px "Courier New", monospace';
+  g.textAlign = 'left';
+  g.fillText('SƠ ĐỒ CÁC TẦNG KHU NHÀ HIỆU BỘ & HỌC TẬP:', 64, 138);
+
+  g.font = '20px "Courier New", monospace';
+  g.fillText('• TẦNG 2: P.201 Phòng Giáo Vụ | P.202 Phòng Bảo Mật | Lớp 11A3', 64, 182);
+  g.fillText('• TẦNG 1: Sảnh Chính | P.101 Thư Viện Trường | P.102 Phòng Đội Bóng', 64, 222);
+  g.fillText('• NGOÀI TRỜI: Sân Cờ Tổ Quốc | Đường Chạy Đất Đỏ | Sân Vận Động', 64, 262);
+
+  g.fillStyle = '#ffd966';
+  g.font = 'bold 22px "Courier New", monospace';
+  g.fillText('GƯƠNG MẶT HỌC SINH TIÊU BIỂU HỌC KỲ I:', 64, 326);
+  g.fillStyle = '#f7f2e0';
+  g.font = '19px "Courier New", monospace';
+  g.fillText('1. Phạm Thu Lan (Lớp 11A1) — Giải Nhất Học Sinh Giỏi Tỉnh', 64, 366);
+  g.fillText('2. Nguyễn Anh Tuấn (Lớp 11A3) — Đội trưởng Đội tuyển Bóng đá', 64, 402);
+  g.fillText('3. Nguyễn Văn Minh (Lớp 11A3) — Ban Cán Sự Lớp 11A3', 64, 438);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}

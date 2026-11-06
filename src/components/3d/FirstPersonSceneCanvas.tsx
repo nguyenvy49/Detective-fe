@@ -70,7 +70,7 @@ export const FirstPersonSceneCanvas: React.FC = () => {
     scene.environment = envRT.texture;
     pmrem.dispose();
 
-    const cam = new THREE.PerspectiveCamera(70, 1, 0.05, 50);
+    const cam = new THREE.PerspectiveCamera(70, 1, 0.05, 95);
     cam.rotation.order = 'YXZ';
     cam.position.set(
       currentMap.spawn.position[0],
@@ -194,9 +194,33 @@ export const FirstPersonSceneCanvas: React.FC = () => {
     let lockedOnce = false;
     let dragging = false;
     let isSitting = false;
+    let isCrouching = false;
+    let logicalFloorY = currentMap.spawn.position[1] - 1.65;
+    let visualFloorY = logicalFloorY;
+    let eyeHeight = 1.65;
+    let vx = 0;
+    let vz = 0;
+    let walkPhase = 0;
+    let lastStepIndex = 0;
+    let smoothRoll = 0;
+    let smoothBobX = 0;
+    let smoothBobY = 0;
+    let smoothPitchNod = 0;
+    let mouseTurnVel = 0;
+    let flashLagX = 0;
+    let flashLagY = 0;
+    let sitAnim: {
+      fromPos: THREE.Vector3;
+      toPos: THREE.Vector3;
+      fromYaw: number;
+      toYaw: number;
+      fromPitch: number;
+      toPitch: number;
+      t: number;
+    } | null = null;
     const savedStandPos = new THREE.Vector3(
       currentMap.spawn.position[0],
-      1.65,
+      currentMap.spawn.position[1],
       currentMap.spawn.position[2]
     );
     let yaw = currentMap.spawn.yaw || 0;
@@ -314,7 +338,15 @@ export const FirstPersonSceneCanvas: React.FC = () => {
     function standUp() {
       if (!isSitting) return;
       isSitting = false;
-      cam.position.set(savedStandPos.x, 1.65, savedStandPos.z);
+      sitAnim = {
+        fromPos: cam.position.clone(),
+        toPos: savedStandPos.clone(),
+        fromYaw: yaw,
+        toYaw: yaw,
+        fromPitch: pitch,
+        toPitch: 0,
+        t: 0,
+      };
     }
 
     function interact(o: THREE.Object3D) {
@@ -324,9 +356,13 @@ export const FirstPersonSceneCanvas: React.FC = () => {
         a.p.state = a.p.state === 'closed' ? 'opening' : 'closing';
         if (a.p.isLightSwitch) {
           env.setLamp(!env.getLampOn());
+          ambience.playSwitchClick();
+        } else {
+          ambience.playDoorOrDrawer(a.p.label === 'Door_main');
         }
       } else if (a.type === 'switch') {
         env.setLamp(!env.getLampOn());
+        ambience.playSwitchClick();
       } else if (a.type === 'cctv') {
         useDetectiveStore.getState().openCctv();
       } else if (a.type === 'pick') {
@@ -335,16 +371,24 @@ export const FirstPersonSceneCanvas: React.FC = () => {
         if (isSitting) {
           standUp();
         } else {
-          savedStandPos.set(cam.position.x, 1.65, cam.position.z);
+          isCrouching = false;
+          savedStandPos.set(cam.position.x, visualFloorY + 1.65, cam.position.z);
           isSitting = true;
-          cam.position.set(
-            a.seat.seatPos[0],
-            a.seat.seatPos[1],
-            a.seat.seatPos[2]
-          );
-          yaw = a.seat.seatYaw;
-          pitch = a.seat.seatPitch;
-          cam.rotation.set(pitch, yaw, 0);
+          vx = 0;
+          vz = 0;
+          sitAnim = {
+            fromPos: cam.position.clone(),
+            toPos: new THREE.Vector3(
+              a.seat.seatPos[0],
+              a.seat.seatPos[1],
+              a.seat.seatPos[2]
+            ),
+            fromYaw: yaw,
+            toYaw: a.seat.seatYaw,
+            fromPitch: pitch,
+            toPitch: a.seat.seatPitch,
+            t: 0,
+          };
         }
       }
     }
@@ -395,9 +439,12 @@ export const FirstPersonSceneCanvas: React.FC = () => {
           }
         } else if (isSitting && (k === 'Space' || k === 'KeyQ')) {
           standUp();
+        } else if (!isSitting && (k === 'KeyC' || k === 'ControlLeft')) {
+          isCrouching = !isCrouching;
         } else if (k === 'KeyF') {
           flashlightOn = !flashlightOn;
           flashlight.intensity = flashlightOn ? 1.35 * PI : 0;
+          ambience.playSwitchClick();
         } else if (k === 'KeyI' || k === 'Tab') {
           store.openPanel('bag');
         } else if (k === 'KeyJ') {
@@ -439,8 +486,13 @@ export const FirstPersonSceneCanvas: React.FC = () => {
       if (!(locked || dragging)) return;
       const state = useDetectiveStore.getState().phase;
       if (state === 'play') {
-        yaw -= e.movementX * 0.0022;
-        pitch = Math.max(-1.4, Math.min(1.4, pitch - e.movementY * 0.0022));
+        const dyaw = e.movementX * 0.0022;
+        const dpitch = e.movementY * 0.0022;
+        yaw -= dyaw;
+        pitch = Math.max(-1.4, Math.min(1.4, pitch - dpitch));
+        mouseTurnVel = THREE.MathUtils.clamp(mouseTurnVel + dyaw * 3.5, -1, 1);
+        flashLagX = THREE.MathUtils.clamp(flashLagX + dyaw * 1.4, -0.35, 0.35);
+        flashLagY = THREE.MathUtils.clamp(flashLagY - dpitch * 1.4, -0.35, 0.35);
       } else if (state === 'inspect') {
         pivot.rotation.y += e.movementX * 0.01;
         pivot.rotation.x += e.movementY * 0.01;
@@ -489,26 +541,160 @@ export const FirstPersonSceneCanvas: React.FC = () => {
       const state = store.phase;
 
       if (state === 'play' && !store.resumeMode) {
-        if (!isSitting) {
+        if (sitAnim) {
+          sitAnim.t = Math.min(1, sitAnim.t + dt * 2.4);
+          const u = sitAnim.t;
+          const ease = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+          cam.position.lerpVectors(sitAnim.fromPos, sitAnim.toPos, ease);
+          let dy = sitAnim.toYaw - sitAnim.fromYaw;
+          while (dy > Math.PI) dy -= Math.PI * 2;
+          while (dy < -Math.PI) dy += Math.PI * 2;
+          yaw = sitAnim.fromYaw + dy * ease;
+          pitch = sitAnim.fromPitch + (sitAnim.toPitch - sitAnim.fromPitch) * ease;
+          if (sitAnim.t >= 1) {
+            sitAnim = null;
+          }
+          cam.rotation.set(pitch, yaw, 0);
+        } else if (!isSitting) {
           const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
           const r = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
-          if (f || r) {
-            const doorModel = loadedModels.find((m) => m.config.id === 'door');
-            const doorPart = doorModel?.parts['Door_main'];
-            const isDoorOpen = doorPart ? doorPart.state === 'open' : false;
-            const sp = 2.4 * dt * (f && r ? 0.707 : 1);
-            const dx = (-Math.sin(yaw) * f + Math.cos(yaw) * r) * sp;
-            const dz = (-Math.cos(yaw) * f - Math.sin(yaw) * r) * sp;
-            if (!env.isBlocked(cam.position.x + dx, cam.position.z, isDoorOpen)) {
+          const isSprinting =
+            Boolean(keys.ShiftLeft || keys.ShiftRight) && !isCrouching && f > 0;
+
+          const maxSp = isCrouching ? 1.65 : isSprinting ? 4.35 : 2.8;
+          const norm = f && r ? 0.7071 : 1;
+          const targetVx = (-Math.sin(yaw) * f + Math.cos(yaw) * r) * norm * maxSp;
+          const targetVz = (-Math.cos(yaw) * f - Math.sin(yaw) * r) * norm * maxSp;
+
+          // Quán tính gia tốc & ma sát dừng mượt mà
+          const accel = f || r ? 11 : 14;
+          vx += (targetVx - vx) * Math.min(1, dt * accel);
+          vz += (targetVz - vz) * Math.min(1, dt * accel);
+
+          const speed = Math.hypot(vx, vz);
+          if (speed > 0.015) {
+            const openDoors: Record<string, boolean> = {};
+            for (const m of loadedModels) {
+              const dp = m.parts['Door_main'];
+              if (dp) {
+                openDoors[m.config.id] = dp.state === 'open';
+              }
+            }
+            const dx = vx * dt;
+            const dz = vz * dt;
+            const prevX = cam.position.x;
+            const prevZ = cam.position.z;
+            if (
+              !env.isBlocked(
+                cam.position.x + dx,
+                cam.position.z,
+                openDoors,
+                logicalFloorY
+              )
+            ) {
               cam.position.x += dx;
             }
-            if (!env.isBlocked(cam.position.x, cam.position.z + dz, isDoorOpen)) {
+            if (
+              !env.isBlocked(
+                cam.position.x,
+                cam.position.z + dz,
+                openDoors,
+                logicalFloorY
+              )
+            ) {
               cam.position.z += dz;
             }
-            cam.position.y = 1.65 + Math.sin(now * 0.008) * 0.012;
+            const actualSpeed =
+              Math.hypot(cam.position.x - prevX, cam.position.z - prevZ) /
+              Math.max(dt, 0.001);
+
+            if (env.getFloorY) {
+              logicalFloorY = env.getFloorY(
+                cam.position.x,
+                cam.position.z,
+                logicalFloorY
+              );
+            }
+
+            // Chu kỳ bước chân 3D + âm thanh bước chân theo từng chất liệu sàn
+            if (actualSpeed > 0.25) {
+              walkPhase += dt * (isSprinting ? 11.2 : isCrouching ? 6.2 : 8.2);
+              const stepIdx = Math.floor((walkPhase + 0.35) / Math.PI);
+              if (stepIdx !== lastStepIndex) {
+                lastStepIndex = stepIdx;
+                const px = cam.position.x;
+                const pz = cam.position.z;
+                const surface =
+                  px >= 6.45
+                    ? 'stairs'
+                    : pz > 9.0
+                    ? 'outdoor'
+                    : pz < 4.65 && !(logicalFloorY < -1.6 && px > -4.0)
+                    ? 'wood'
+                    : 'tile';
+                ambience.playFootstep(surface, isSprinting);
+              }
+            }
           }
+
+          // Nội suy chiều cao mắt (đứng 1.65m / ngồi xổm 0.98m) và độ cao tầng/cầu thang
+          const targetEye = isCrouching ? 0.98 : 1.65;
+          eyeHeight += (targetEye - eyeHeight) * Math.min(1, dt * 10);
+          visualFloorY +=
+            (logicalFloorY - visualFloorY) * Math.min(1, dt * 16);
+
+          // Nhịp nhún đầu 3 trục (dọc + lắc ngang + gật nhẹ) + nhịp thở khi đứng yên
+          const moveFactor = Math.min(1, speed / 2.6);
+          const bobAmpY = isSprinting ? 0.042 : isCrouching ? 0.016 : 0.026;
+          const bobAmpX = isSprinting ? 0.024 : 0.014;
+          const targetBobY =
+            moveFactor > 0.05
+              ? -Math.abs(Math.cos(walkPhase)) * bobAmpY * moveFactor
+              : Math.sin(now * 0.002) * 0.0045;
+          const targetBobX =
+            moveFactor > 0.05
+              ? Math.sin(walkPhase) * bobAmpX * moveFactor
+              : Math.cos(now * 0.001) * 0.002;
+          const targetPitchNod =
+            moveFactor > 0.05
+              ? Math.sin(walkPhase * 2) * 0.005 * moveFactor
+              : Math.sin(now * 0.002) * 0.0015;
+
+          smoothBobY += (targetBobY - smoothBobY) * Math.min(1, dt * 14);
+          smoothBobX += (targetBobX - smoothBobX) * Math.min(1, dt * 12);
+          smoothPitchNod +=
+            (targetPitchNod - smoothPitchNod) * Math.min(1, dt * 12);
+
+          // Nghiêng đầu nhẹ khi strafe A/D, xoay chuột và dồn trọng tâm bước chân
+          mouseTurnVel *= Math.pow(0.04, dt);
+          const targetRoll =
+            -r * 0.016 -
+            mouseTurnVel * 0.014 +
+            Math.sin(walkPhase) * 0.005 * moveFactor;
+          smoothRoll += (targetRoll - smoothRoll) * Math.min(1, dt * 10);
+
+          // FOV động khi chạy nhanh (Sprint)
+          const targetFov = isSprinting ? 74.5 : isCrouching ? 67.5 : 70;
+          if (Math.abs(cam.fov - targetFov) > 0.05) {
+            cam.fov += (targetFov - cam.fov) * Math.min(1, dt * 8);
+            cam.updateProjectionMatrix();
+          }
+
+          cam.position.y = visualFloorY + eyeHeight + smoothBobY;
+          cam.rotation.set(pitch + smoothPitchNod, yaw, smoothRoll);
+        } else {
+          cam.rotation.set(pitch, yaw, 0);
         }
-        cam.rotation.set(pitch, yaw, 0);
+
+        // Quán tính tay cầm đèn pin (trễ nhẹ theo cổ tay khi lia chuột & bước đi)
+        flashLagX *= Math.pow(0.08, dt);
+        flashLagY *= Math.pow(0.08, dt);
+        flashlight.target.position.set(
+          flashLagX + smoothBobX * 1.8,
+          -0.02 + flashLagY + smoothBobY * 1.5,
+          -4
+        );
+        flashlight.target.updateMatrixWorld();
 
         if (frame++ % 2 === 0) {
           const o = raycastInteractable(

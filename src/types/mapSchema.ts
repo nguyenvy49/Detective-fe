@@ -115,7 +115,13 @@ export interface RoomEnvironmentResult {
   setLamp: (on: boolean) => void;
   getLampOn: () => boolean;
   toggleSwitchLever?: (on: boolean) => void;
-  isBlocked: (x: number, z: number, isDoorOpen?: boolean) => boolean;
+  getFloorY?: (x: number, z: number, currentFloorY: number) => number;
+  isBlocked: (
+    x: number,
+    z: number,
+    openDoors?: Record<string, boolean>,
+    currentFloorY?: number
+  ) => boolean;
 }
 
 export interface CrimeSceneMapConfig {

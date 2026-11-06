@@ -28,8 +28,8 @@ export const StatusHud: React.FC = () => {
       </div>
 
       <div id="hint">
-        WASD di chuyển · Chuột nhìn quanh · E tương tác · F đèn pin · I túi vật
-        chứng · J hồ sơ &amp; buộc tội
+        WASD di chuyển · Shift chạy · C ngồi thấp · E tương tác · F đèn pin · I
+        túi vật chứng · J hồ sơ
       </div>
 
       <div

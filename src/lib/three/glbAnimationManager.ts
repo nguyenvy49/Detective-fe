@@ -31,6 +31,106 @@ function findGlbNode(
   );
 }
 
+function setupPartsAndSeats(
+  root: THREE.Object3D,
+  animations: THREE.AnimationClip[],
+  mixer: THREE.AnimationMixer,
+  parts: Record<string, AnimatedPartRuntime>,
+  config: AnimatedGlbModelConfig
+): void {
+  config.parts.forEach((partCfg) => {
+    const { nodeName, midTime } = partCfg;
+    const node = findGlbNode(root, nodeName);
+    if (!node) return;
+
+    const requestedClips = partCfg.clipNames
+      ? partCfg.clipNames
+      : partCfg.clipName
+        ? [partCfg.clipName]
+        : [];
+
+    const clips: ClipSegmentRuntime[] = [];
+    let globalStart = 1e9;
+    let globalEnd = 0;
+
+    requestedClips.forEach((cName) => {
+      const normalizedTarget = cName.replace(/\W/g, '');
+      const clip = animations.find(
+        (a) => a.name.replace(/\W/g, '') === normalizedTarget
+      );
+      if (!clip) return;
+
+      let s = 1e9;
+      let e = 0;
+      clip.tracks.forEach((t) => {
+        if (t.times.length > 0) {
+          s = Math.min(s, t.times[0]);
+          e = Math.max(e, t.times[t.times.length - 1]);
+        }
+      });
+      if (s > e) return;
+
+      globalStart = Math.min(globalStart, s);
+      globalEnd = Math.max(globalEnd, e);
+
+      const act = mixer.clipAction(clip);
+      act.play();
+      act.paused = true;
+      act.time = s;
+      clips.push({ act, minTime: s, maxTime: e });
+    });
+
+    if (clips.length === 0 || globalStart > globalEnd) return;
+
+    const highlightNode =
+      (partCfg.highlightNodeName &&
+        findGlbNode(root, partCfg.highlightNodeName)) ||
+      node;
+
+    const part: AnimatedPartRuntime = {
+      node,
+      highlightNode,
+      clips,
+      start: globalStart,
+      end: globalEnd,
+      mid: midTime ?? (globalStart + globalEnd) / 2,
+      t: globalStart,
+      state: 'closed',
+      label: nodeName,
+      isLightSwitch: partCfg.isLightSwitch,
+    };
+
+    if (partCfg.hitRadius) {
+      const px = new THREE.Mesh(
+        new THREE.SphereGeometry(partCfg.hitRadius, 8, 6),
+        new THREE.MeshBasicMaterial({ visible: false })
+      );
+      px.userData.proxy = true;
+      highlightNode.add(px);
+    }
+
+    applyPartTime(part);
+    parts[nodeName] = part;
+    highlightNode.userData.act = { type: 'part', p: part };
+  });
+
+  if (config.seatNodes) {
+    config.seatNodes.forEach((seatCfg) => {
+      const node = findGlbNode(root, seatCfg.nodeName);
+      if (!node) return;
+      node.userData.act = {
+        type: 'sit',
+        seat: {
+          node,
+          seatPos: seatCfg.seatPos,
+          seatYaw: seatCfg.seatYaw,
+          seatPitch: seatCfg.seatPitch ?? -0.1,
+        },
+      };
+    });
+  }
+}
+
 export function loadAnimatedGlbModel(
   scene: THREE.Scene,
   config: AnimatedGlbModelConfig
@@ -40,11 +140,44 @@ export function loadAnimatedGlbModel(
     loader.load(
       config.url,
       (gltf) => {
-        const rootObj =
-          (config.rootObjectName &&
-            findGlbNode(gltf.scene, config.rootObjectName)) ||
-          gltf.scene;
+        if (config.rootObjectName) {
+          const targetNode = findGlbNode(gltf.scene, config.rootObjectName);
+          if (targetNode && targetNode !== gltf.scene) {
+            const wrapper = new THREE.Group();
+            targetNode.position.set(0, 0, 0);
+            targetNode.rotation.set(0, 0, 0);
+            targetNode.scale.set(1, 1, 1);
+            wrapper.add(targetNode);
+            wrapper.position.set(
+              config.position[0],
+              config.position[1],
+              config.position[2]
+            );
+            if (config.rotation) {
+              wrapper.rotation.set(
+                config.rotation[0],
+                config.rotation[1],
+                config.rotation[2]
+              );
+            }
+            wrapper.scale.setScalar(config.scale);
+            wrapper.traverse((child) => {
+              if ((child as THREE.Mesh).isMesh && !child.userData.proxy) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+              }
+            });
+            scene.add(wrapper);
 
+            const mixer = new THREE.AnimationMixer(wrapper);
+            const parts: Record<string, AnimatedPartRuntime> = {};
+            setupPartsAndSeats(wrapper, gltf.animations, mixer, parts, config);
+            resolve({ config, rootObj: wrapper, mixer, parts });
+            return;
+          }
+        }
+
+        const rootObj = gltf.scene;
         rootObj.position.set(
           config.position[0],
           config.position[1],
@@ -58,109 +191,17 @@ export function loadAnimatedGlbModel(
           );
         }
         rootObj.scale.setScalar(config.scale);
-        gltf.scene.traverse((child) => {
+        rootObj.traverse((child) => {
           if ((child as THREE.Mesh).isMesh && !child.userData.proxy) {
             child.castShadow = true;
             child.receiveShadow = true;
           }
         });
-        scene.add(gltf.scene);
+        scene.add(rootObj);
 
-        const mixer = new THREE.AnimationMixer(gltf.scene);
+        const mixer = new THREE.AnimationMixer(rootObj);
         const parts: Record<string, AnimatedPartRuntime> = {};
-
-        config.parts.forEach((partCfg) => {
-          const { nodeName, midTime } = partCfg;
-          const node = findGlbNode(gltf.scene, nodeName);
-          if (!node) return;
-
-          const requestedClips = partCfg.clipNames
-            ? partCfg.clipNames
-            : partCfg.clipName
-              ? [partCfg.clipName]
-              : [];
-
-          const clips: ClipSegmentRuntime[] = [];
-          let globalStart = 1e9;
-          let globalEnd = 0;
-
-          requestedClips.forEach((cName) => {
-            const normalizedTarget = cName.replace(/\W/g, '');
-            const clip = gltf.animations.find(
-              (a) => a.name.replace(/\W/g, '') === normalizedTarget
-            );
-            if (!clip) return;
-
-            let s = 1e9;
-            let e = 0;
-            clip.tracks.forEach((t) => {
-              if (t.times.length > 0) {
-                s = Math.min(s, t.times[0]);
-                e = Math.max(e, t.times[t.times.length - 1]);
-              }
-            });
-            if (s > e) return;
-
-            globalStart = Math.min(globalStart, s);
-            globalEnd = Math.max(globalEnd, e);
-
-            const act = mixer.clipAction(clip);
-            act.play();
-            act.paused = true;
-            act.time = s;
-            clips.push({ act, minTime: s, maxTime: e });
-          });
-
-          if (clips.length === 0 || globalStart > globalEnd) return;
-
-          const highlightNode =
-            (partCfg.highlightNodeName &&
-              findGlbNode(gltf.scene, partCfg.highlightNodeName)) ||
-            node;
-
-          const part: AnimatedPartRuntime = {
-            node,
-            highlightNode,
-            clips,
-            start: globalStart,
-            end: globalEnd,
-            mid: midTime ?? (globalStart + globalEnd) / 2,
-            t: globalStart,
-            state: 'closed',
-            label: nodeName,
-            isLightSwitch: partCfg.isLightSwitch,
-          };
-
-          if (partCfg.hitRadius) {
-            const px = new THREE.Mesh(
-              new THREE.SphereGeometry(partCfg.hitRadius, 8, 6),
-              new THREE.MeshBasicMaterial({ visible: false })
-            );
-            px.userData.proxy = true;
-            highlightNode.add(px);
-          }
-
-          applyPartTime(part);
-          parts[nodeName] = part;
-          highlightNode.userData.act = { type: 'part', p: part };
-        });
-
-        if (config.seatNodes) {
-          config.seatNodes.forEach((seatCfg) => {
-            const node = findGlbNode(gltf.scene, seatCfg.nodeName);
-            if (!node) return;
-            node.userData.act = {
-              type: 'sit',
-              seat: {
-                node,
-                seatPos: seatCfg.seatPos,
-                seatYaw: seatCfg.seatYaw,
-                seatPitch: seatCfg.seatPitch ?? -0.1,
-              },
-            };
-          });
-        }
-
+        setupPartsAndSeats(rootObj, gltf.animations, mixer, parts, config);
         mixer.update(0);
         resolve({ config, rootObj, mixer, parts });
       },
@@ -169,6 +210,12 @@ export function loadAnimatedGlbModel(
     );
   });
 }
+//       },
+//       undefined,
+//       (err) => reject(err)
+//     );
+//   });
+// }
 
 export function updateAnimatedModels(
   loadedModels: LoadedAnimatedModel[],
@@ -183,7 +230,10 @@ export function updateAnimatedModels(
     for (const key in model.parts) {
       const p = model.parts[key];
       if (p.state === 'opening') {
-        p.t += dt * sp;
+        const span = Math.max(0.01, p.mid - p.start);
+        const u = Math.max(0, Math.min(1, (p.t - p.start) / span));
+        const ease = 0.55 + 0.75 * Math.sin(u * Math.PI);
+        p.t += dt * sp * ease;
         if (p.t >= p.mid) {
           p.t = p.mid;
           p.state = 'open';
@@ -191,7 +241,10 @@ export function updateAnimatedModels(
         moved = true;
         applyPartTime(p);
       } else if (p.state === 'closing') {
-        p.t += dt * sp;
+        const span = Math.max(0.01, p.end - p.mid);
+        const u = Math.max(0, Math.min(1, (p.t - p.mid) / span));
+        const ease = 0.55 + 0.75 * Math.sin(u * Math.PI);
+        p.t += dt * sp * ease;
         if (p.t >= p.end - 0.001) {
           p.t = p.start;
           p.state = 'closed';
